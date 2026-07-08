@@ -1,6 +1,8 @@
 import streamlit as st
 import os, json, hashlib, io
 import html as _html
+import urllib.parse, urllib.request
+import streamlit.components.v1 as components
 from datetime import datetime
 from pathlib import Path
 import openpyxl
@@ -131,6 +133,29 @@ def leer_excel(ruta):
     except Exception as e:
         return {"Error": pd.DataFrame([{"Mensaje": str(e)}])}
 
+# ── Visor oficial de Microsoft (igual al del correo) ────────────────
+# Requiere que el archivo tenga una URL publica. Como el repositorio es
+# publico, cada archivo de docs/ es accesible en raw.githubusercontent.
+REPO_RAW = "https://raw.githubusercontent.com/Cath855/CC150701-portal/main/docs/"
+
+@st.cache_data(ttl=600, show_spinner=False)
+def disponible_en_repo(nombre: str) -> bool:
+    """True si el archivo ya esta publicado en GitHub (tiene URL publica)."""
+    try:
+        req = urllib.request.Request(REPO_RAW + urllib.parse.quote(nombre), method="HEAD")
+        with urllib.request.urlopen(req, timeout=6) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+def visor_office(nombre: str, alto: int = 660):
+    url_archivo = REPO_RAW + urllib.parse.quote(nombre)
+    src = urllib.parse.quote(url_archivo, safe="")
+    components.iframe(
+        f"https://view.officeapps.live.com/op/embed.aspx?src={src}",
+        height=alto, scrolling=True,
+    )
+
 def _letra_columna(i):
     # 0 -> A, 1 -> B, ... 26 -> AA
     s, n = "", i + 1
@@ -181,6 +206,16 @@ def excel_a_html(df):
 def mostrar_archivo(ruta: Path):
     ext = ruta.suffix.lower()
     if ext in (".xlsx", ".xls"):
+        # Vista fiel (colores, celdas combinadas, pestanas de hojas) usando
+        # el visor de Microsoft. Solo funciona con archivos ya publicados.
+        if disponible_en_repo(ruta.name):
+            visor_office(ruta.name)
+            return
+        # Respaldo para archivos subidos desde la app (aun sin URL publica).
+        st.caption(
+            "Vista previa simplificada. Este archivo todavía no está publicado "
+            "en el repositorio, por eso no se muestra con el formato original."
+        )
         sheets = leer_excel(ruta)
         if len(sheets) == 1:
             nombre_hoja, df = next(iter(sheets.items()))
