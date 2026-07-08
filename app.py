@@ -1,7 +1,8 @@
 import streamlit as st
-import json
+import json, base64
 import html as _html
 import urllib.parse, urllib.request
+import requests
 import streamlit.components.v1 as components
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -86,6 +87,8 @@ tr.xl-head td.xl-rownum { background: #f3f3f3 !important; color: #666; }
 DOCS_DIR = Path("docs")
 META_FILE = DOCS_DIR / "meta.json"
 DOCS_DIR.mkdir(exist_ok=True)
+
+ADMIN_PASS = "CNC2025"   # clave para el panel de administradora (subir/eliminar)
 
 ICONS = {
     "xlsx": ("XLSX","icon-xlsx"), "xls": ("XLS","icon-xlsx"),
@@ -174,6 +177,52 @@ def disponible_en_repo(nombre: str) -> bool:
             return r.status == 200
     except Exception:
         return False
+
+# ── Escritura en GitHub (subir / eliminar desde la app) ─────────────
+# Necesita un token guardado en los Secrets de Streamlit como:
+#   github_token = "..."
+GITHUB_CONTENTS = "https://api.github.com/repos/Cath855/CC150701-portal/contents/docs/"
+
+def github_token() -> str:
+    try:
+        return st.secrets["github_token"]
+    except Exception:
+        return ""
+
+def _gh_headers():
+    return {
+        "Authorization": f"Bearer {github_token()}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "portal-cc150701",
+    }
+
+def _gh_sha(nombre: str):
+    """sha actual del archivo en GitHub (hace falta para reemplazar o borrar)."""
+    r = requests.get(GITHUB_CONTENTS + urllib.parse.quote(nombre),
+                     headers=_gh_headers(), timeout=15)
+    return r.json().get("sha") if r.status_code == 200 else None
+
+def gh_subir(nombre: str, contenido: bytes):
+    payload = {
+        "message": f"Portal: subir {nombre}",
+        "content": base64.b64encode(contenido).decode(),
+        "branch": "main",
+    }
+    sha = _gh_sha(nombre)
+    if sha:                       # el archivo ya existia -> se reemplaza
+        payload["sha"] = sha
+    r = requests.put(GITHUB_CONTENTS + urllib.parse.quote(nombre),
+                     headers=_gh_headers(), json=payload, timeout=60)
+    return r.status_code in (200, 201), r
+
+def gh_eliminar(nombre: str):
+    sha = _gh_sha(nombre)
+    if not sha:
+        return False, None
+    payload = {"message": f"Portal: eliminar {nombre}", "sha": sha, "branch": "main"}
+    r = requests.delete(GITHUB_CONTENTS + urllib.parse.quote(nombre),
+                        headers=_gh_headers(), json=payload, timeout=60)
+    return r.status_code == 200, r
 
 def visor_office(nombre: str, alto: int = 660):
     url_archivo = REPO_RAW + urllib.parse.quote(nombre)
@@ -276,6 +325,57 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ── Panel de administradora (barra lateral) ─────────────────────────
+if "admin" not in st.session_state:
+    st.session_state.admin = False
+
+with st.sidebar:
+    st.markdown("### 🔐 Administradora")
+    if not st.session_state.admin:
+        clave = st.text_input("Contraseña", type="password", key="pass_input")
+        if st.button("Entrar", use_container_width=True):
+            if clave == ADMIN_PASS:
+                st.session_state.admin = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta")
+    else:
+        st.success("✓ Sesión activa")
+        if st.button("Cerrar sesión", use_container_width=True):
+            st.session_state.admin = False
+            st.rerun()
+        st.markdown("---")
+        st.markdown("### ⬆️ Subir documentos")
+        if not github_token():
+            st.warning(
+                "Falta configurar la llave de GitHub (token) en los *Secrets* "
+                "de la app. Sin ella no se puede subir ni eliminar."
+            )
+        else:
+            nuevos = st.file_uploader(
+                "Selecciona uno o varios archivos",
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+                key="uploader",
+            )
+            if nuevos and st.button("📤 Publicar en el portal",
+                                    type="primary", use_container_width=True):
+                todo_ok = True
+                for archi in nuevos:
+                    datos = archi.getvalue()
+                    ok, r = gh_subir(archi.name, datos)
+                    if ok:
+                        (DOCS_DIR / archi.name).write_bytes(datos)  # reflejo inmediato
+                        st.success(f"✓ {archi.name}")
+                    else:
+                        todo_ok = False
+                        detalle = (r.text[:150] if r is not None else "sin respuesta")
+                        st.error(f"✗ {archi.name}: {detalle}")
+                if todo_ok:
+                    st.cache_data.clear()
+                    st.success("Documentos publicados. Se guardaron en GitHub.")
+                    st.rerun()
+
 # ── Lista documentos ────────────────────────────────────────────────
 meta = cargar_meta()
 
@@ -346,8 +446,12 @@ else:
         label, icon_cls = get_icon(f.name)
 
         with st.expander(f"{f.name}     📅 {fecha}     ·  {size}", expanded=False):
-            # Fila superior: icono + info + boton de descarga
-            c1, c2 = st.columns([6, 1.6])
+            # Fila superior: icono + info + botones
+            if st.session_state.admin:
+                c1, c2, c3 = st.columns([5, 1.6, 1.4])
+            else:
+                c1, c2 = st.columns([6, 1.6])
+                c3 = None
             with c1:
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:10px;padding:4px 0">'
@@ -364,6 +468,18 @@ else:
                     key=f"dl_{f.name}",
                     use_container_width=True,
                 )
+            if c3 is not None:
+                with c3:
+                    if st.button("🗑️ Eliminar", key=f"del_{f.name}",
+                                 use_container_width=True):
+                        ok, r = gh_eliminar(f.name)
+                        if ok:
+                            f.unlink(missing_ok=True)      # reflejo inmediato
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            detalle = (r.text[:150] if r is not None else "sin respuesta")
+                            st.error(f"No se pudo eliminar: {detalle}")
 
             # Vista previa
             st.markdown("---")
