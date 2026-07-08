@@ -3,7 +3,7 @@ import json
 import html as _html
 import urllib.parse, urllib.request
 import streamlit.components.v1 as components
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import openpyxl
 import pandas as pd
@@ -105,9 +105,19 @@ def fmt_size(b):
     if b < 1048576: return f"{b/1024:.0f} KB"
     return f"{b/1048576:.1f} MB"
 
+ZONA_CO = timezone(timedelta(hours=-5))          # hora de Colombia
+MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+
 def fmt_fecha(s):
-    try: return datetime.fromisoformat(s).strftime("%d %b %Y · %H:%M")
-    except: return s
+    if not s:
+        return ""
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo:                             # GitHub responde en UTC
+            dt = dt.astimezone(ZONA_CO)
+        return f"{dt.day:02d} {MESES[dt.month - 1]} {dt.year} · {dt:%H:%M}"
+    except Exception:
+        return s
 
 def get_icon(nombre):
     ext = nombre.rsplit(".",1)[-1].lower() if "." in nombre else ""
@@ -133,6 +143,27 @@ def leer_excel(ruta):
 # Requiere que el archivo tenga una URL publica. Como el repositorio es
 # publico, cada archivo de docs/ es accesible en raw.githubusercontent.
 REPO_RAW = "https://raw.githubusercontent.com/Cath855/CC150701-portal/main/docs/"
+
+API_COMMITS = "https://api.github.com/repos/Cath855/CC150701-portal/commits"
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fecha_en_github(nombre: str) -> str:
+    """Fecha (ISO, UTC) del ultimo commit que toco docs/<nombre>.
+    Sirve para fechar los archivos subidos directamente en GitHub."""
+    params = urllib.parse.urlencode({"path": f"docs/{nombre}", "per_page": 1})
+    req = urllib.request.Request(
+        f"{API_COMMITS}?{params}",
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": "portal-cc150701"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=6) as r:
+            datos = json.loads(r.read().decode("utf-8"))
+        if datos:
+            return datos[0]["commit"]["committer"]["date"]
+    except Exception:
+        pass
+    return ""
 
 @st.cache_data(ttl=600, show_spinner=False)
 def disponible_en_repo(nombre: str) -> bool:
@@ -268,7 +299,10 @@ else:
 
     for f in archivos:
         info  = meta.get(f.name, {})
-        fecha = fmt_fecha(info.get("fecha", ""))
+        # Fecha: primero la registrada en meta.json; si no hay (archivo
+        # subido directo en GitHub), se consulta la fecha del commit.
+        iso = info.get("fecha", "") or fecha_en_github(f.name)
+        fecha = fmt_fecha(iso)
         size  = fmt_size(info.get("size", f.stat().st_size))
         label, icon_cls = get_icon(f.name)
 
