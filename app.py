@@ -1,5 +1,6 @@
 import streamlit as st
 import os, json, hashlib, io
+import html as _html
 from datetime import datetime
 from pathlib import Path
 import openpyxl
@@ -55,6 +56,28 @@ div[data-testid="stExpander"] {
     margin-bottom: 0.5rem !important;
 }
 section[data-testid="stExpander"] > div { padding: 0.5rem 0 !important; }
+
+/* ── Visor tipo hoja de Excel ─────────────────────────────── */
+.xl-wrap {
+    overflow: auto; max-height: 540px;
+    border: 1px solid #b7b7b7; border-radius: 6px; background: white;
+}
+.xl-table {
+    border-collapse: collapse; white-space: nowrap;
+    font-family: 'Segoe UI', Calibri, Arial, sans-serif; font-size: 0.8rem;
+}
+.xl-table th, .xl-table td {
+    border: 1px solid #d9d9d9; padding: 4px 9px; text-align: left;
+}
+.xl-table tbody td { background: white; color: #222; }
+.xl-corner, .xl-col, .xl-rownum {
+    background: #f3f3f3; color: #666; font-weight: 600; text-align: center;
+}
+.xl-col    { position: sticky; top: 0; z-index: 2; }
+.xl-corner { position: sticky; top: 0; left: 0; z-index: 3; }
+.xl-rownum { position: sticky; left: 0; z-index: 1; min-width: 38px; }
+tr.xl-head td { background: #eaf1fb !important; font-weight: 600; color: #1a1a1a; }
+tr.xl-head td.xl-rownum { background: #f3f3f3 !important; color: #666; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -108,18 +131,65 @@ def leer_excel(ruta):
     except Exception as e:
         return {"Error": pd.DataFrame([{"Mensaje": str(e)}])}
 
+def _letra_columna(i):
+    # 0 -> A, 1 -> B, ... 26 -> AA
+    s, n = "", i + 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+def _celda(v):
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        if pd.isna(v):
+            return ""
+        if v.is_integer():
+            return str(int(v))
+    return str(v)
+
+def excel_a_html(df):
+    """Dibuja el DataFrame como una hoja de Excel: cuadricula,
+    letras de columna (A, B, C...), numeros de fila y encabezado."""
+    cols = list(df.columns)
+
+    letras = "<th class='xl-corner'></th>" + "".join(
+        f"<th class='xl-col'>{_letra_columna(i)}</th>" for i in range(len(cols))
+    )
+
+    # La primera fila de la hoja son los nombres de columna leidos del Excel
+    encabezado = "<td class='xl-rownum'>1</td>" + "".join(
+        f"<td>{_html.escape('' if str(c).startswith('Col') else str(c))}</td>"
+        for c in cols
+    )
+
+    filas = [f"<tr class='xl-head'>{encabezado}</tr>"]
+    for n, (_, fila) in enumerate(df.iterrows(), start=2):
+        celdas = f"<td class='xl-rownum'>{n}</td>" + "".join(
+            f"<td>{_html.escape(_celda(v))}</td>" for v in fila
+        )
+        filas.append(f"<tr>{celdas}</tr>")
+
+    return (
+        "<div class='xl-wrap'><table class='xl-table'>"
+        f"<thead><tr>{letras}</tr></thead>"
+        f"<tbody>{''.join(filas)}</tbody>"
+        "</table></div>"
+    )
+
 def mostrar_archivo(ruta: Path):
     ext = ruta.suffix.lower()
     if ext in (".xlsx", ".xls"):
         sheets = leer_excel(ruta)
         if len(sheets) == 1:
             nombre_hoja, df = next(iter(sheets.items()))
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.markdown(excel_a_html(df), unsafe_allow_html=True)
         else:
             tabs = st.tabs(list(sheets.keys()))
             for tab, (nombre_hoja, df) in zip(tabs, sheets.items()):
                 with tab:
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.markdown(excel_a_html(df), unsafe_allow_html=True)
     elif ext == ".pdf":
         data = ruta.read_bytes()
         b64 = __import__("base64").b64encode(data).decode()
