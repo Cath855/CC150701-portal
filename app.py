@@ -185,10 +185,16 @@ with st.sidebar:
 
 # ── Lista documentos ────────────────────────────────────────────────
 meta = cargar_meta()
+
+def orden_clave(f):
+    # Los archivos cuyo nombre empieza por "Datos" van de primeros;
+    # el resto queda en orden alfabetico (EE109, EE223, ...).
+    es_datos = 0 if f.name.lower().startswith("datos") else 1
+    return (es_datos, f.name.lower())
+
 archivos = sorted(
     [f for f in DOCS_DIR.iterdir() if f.is_file() and f.name != "meta.json"],
-    key=lambda f: meta.get(f.name, {}).get("fecha", ""),
-    reverse=True
+    key=orden_clave
 )
 
 if not archivos:
@@ -204,7 +210,7 @@ else:
         size  = fmt_size(info.get("size", f.stat().st_size))
         label, icon_cls = get_icon(f.name)
 
-        with st.expander(f.name, expanded=False):
+        with st.expander(f"{f.name}     📅 {fecha}     ·  {size}", expanded=False):
             # Fila superior: icono + info + botones
             c1, c2, c3 = st.columns([5, 1.5, 1.5])
             with c1:
