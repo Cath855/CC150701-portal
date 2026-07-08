@@ -279,30 +279,69 @@ st.markdown("""
 # ── Lista documentos ────────────────────────────────────────────────
 meta = cargar_meta()
 
-def orden_clave(f):
-    # Los archivos cuyo nombre empieza por "Datos" van de primeros;
-    # el resto queda en orden alfabetico (EE109, EE223, ...).
-    es_datos = 0 if f.name.lower().startswith("datos") else 1
-    return (es_datos, f.name.lower())
+def iso_de(f):
+    # Fecha del archivo: la de meta.json o, si no hay, la del commit en GitHub.
+    return meta.get(f.name, {}).get("fecha", "") or fecha_en_github(f.name)
 
-archivos = sorted(
-    [f for f in DOCS_DIR.iterdir() if f.is_file() and f.name != "meta.json"],
-    key=orden_clave
-)
+def dt_orden(iso):
+    # Convierte la fecha a algo comparable; sin fecha -> queda como muy antigua.
+    if not iso:
+        return datetime.min
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo:
+            dt = dt.astimezone(ZONA_CO).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return datetime.min
 
-if not archivos:
+def clave_predet(d):
+    # Predeterminado: los que empiezan por "Datos" primero; el resto alfabetico.
+    es_datos = 0 if d["f"].name.lower().startswith("datos") else 1
+    return (es_datos, d["f"].name.lower())
+
+docs = [
+    {"f": f, "iso": iso_de(f)}
+    for f in DOCS_DIR.iterdir()
+    if f.is_file() and f.name != "meta.json"
+]
+
+if not docs:
     st.info("No hay documentos disponibles aún.")
 else:
-    n = len(archivos)
-    st.markdown(f"**{n} documento{'s' if n!=1 else ''} disponibles**")
+    col_n, col_orden = st.columns([2, 1.5])
+    with col_n:
+        n = len(docs)
+        st.markdown(f"**{n} documento{'s' if n!=1 else ''} disponibles**")
+    with col_orden:
+        orden = st.selectbox(
+            "🔃 Ordenar por",
+            [
+                "Predeterminado (Datos primero)",
+                "📅 Fecha: más recientes primero",
+                "📅 Fecha: más antiguos primero",
+                "Nombre (A → Z)",
+                "Nombre (Z → A)",
+            ],
+        )
+
+    if orden == "📅 Fecha: más recientes primero":
+        docs.sort(key=lambda d: dt_orden(d["iso"]), reverse=True)
+    elif orden == "📅 Fecha: más antiguos primero":
+        docs.sort(key=lambda d: dt_orden(d["iso"]))
+    elif orden == "Nombre (A → Z)":
+        docs.sort(key=lambda d: d["f"].name.lower())
+    elif orden == "Nombre (Z → A)":
+        docs.sort(key=lambda d: d["f"].name.lower(), reverse=True)
+    else:
+        docs.sort(key=clave_predet)
+
     st.markdown("")
 
-    for f in archivos:
+    for d in docs:
+        f     = d["f"]
         info  = meta.get(f.name, {})
-        # Fecha: primero la registrada en meta.json; si no hay (archivo
-        # subido directo en GitHub), se consulta la fecha del commit.
-        iso = info.get("fecha", "") or fecha_en_github(f.name)
-        fecha = fmt_fecha(iso)
+        fecha = fmt_fecha(d["iso"])
         size  = fmt_size(info.get("size", f.stat().st_size))
         label, icon_cls = get_icon(f.name)
 
