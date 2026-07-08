@@ -1,5 +1,5 @@
 import streamlit as st
-import os, json, hashlib, io
+import json
 import html as _html
 import urllib.parse, urllib.request
 import streamlit.components.v1 as components
@@ -85,7 +85,6 @@ tr.xl-head td.xl-rownum { background: #f3f3f3 !important; color: #666; }
 
 DOCS_DIR = Path("docs")
 META_FILE = DOCS_DIR / "meta.json"
-ADMIN_HASH = hashlib.sha256("CNC2025".encode()).hexdigest()
 DOCS_DIR.mkdir(exist_ok=True)
 
 ICONS = {
@@ -100,9 +99,6 @@ def cargar_meta():
     if META_FILE.exists():
         return json.loads(META_FILE.read_text(encoding="utf-8"))
     return {}
-
-def guardar_meta(meta):
-    META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def fmt_size(b):
     if b < 1024: return f"{b} B"
@@ -249,45 +245,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Sidebar admin ───────────────────────────────────────────────────
-if "admin" not in st.session_state:
-    st.session_state.admin = False
-
-with st.sidebar:
-    st.markdown("### 🔐 Administrador")
-    if not st.session_state.admin:
-        clave = st.text_input("Contraseña", type="password", key="pass_input")
-        if st.button("Entrar", use_container_width=True):
-            if hashlib.sha256(clave.encode()).hexdigest() == ADMIN_HASH:
-                st.session_state.admin = True
-                st.rerun()
-            else:
-                st.error("Contraseña incorrecta")
-    else:
-        st.success("✓ Sesión activa")
-        if st.button("Cerrar sesión", use_container_width=True):
-            st.session_state.admin = False
-            st.rerun()
-        st.markdown("---")
-        st.markdown("### ⬆️ Subir archivos")
-        archivos_nuevos = st.file_uploader(
-            "Selecciona uno o varios archivos",
-            accept_multiple_files=True,
-            label_visibility="collapsed"
-        )
-        if archivos_nuevos:
-            meta = cargar_meta()
-            for archi in archivos_nuevos:
-                destino = DOCS_DIR / archi.name
-                destino.write_bytes(archi.read())
-                meta[archi.name] = {
-                    "fecha": datetime.now().isoformat(),
-                    "size": destino.stat().st_size
-                }
-            guardar_meta(meta)
-            st.success(f"✓ {len(archivos_nuevos)} archivo(s) subido(s)")
-            st.rerun()
-
 # ── Lista documentos ────────────────────────────────────────────────
 meta = cargar_meta()
 
@@ -316,8 +273,8 @@ else:
         label, icon_cls = get_icon(f.name)
 
         with st.expander(f"{f.name}     📅 {fecha}     ·  {size}", expanded=False):
-            # Fila superior: icono + info + botones
-            c1, c2, c3 = st.columns([5, 1.5, 1.5])
+            # Fila superior: icono + info + boton de descarga
+            c1, c2 = st.columns([6, 1.6])
             with c1:
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:10px;padding:4px 0">'
@@ -334,14 +291,6 @@ else:
                     key=f"dl_{f.name}",
                     use_container_width=True,
                 )
-            with c3:
-                if st.session_state.admin:
-                    if st.button("🗑️ Eliminar", key=f"del_{f.name}", use_container_width=True):
-                        f.unlink()
-                        if f.name in meta:
-                            del meta[f.name]
-                            guardar_meta(meta)
-                        st.rerun()
 
             # Vista previa
             st.markdown("---")
