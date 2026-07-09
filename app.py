@@ -103,6 +103,9 @@ def cargar_meta():
         return json.loads(META_FILE.read_text(encoding="utf-8"))
     return {}
 
+def guardar_meta(meta):
+    META_FILE.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
 def fmt_size(b):
     if b < 1024: return f"{b} B"
     if b < 1048576: return f"{b/1024:.0f} KB"
@@ -149,21 +152,31 @@ REPO_RAW = "https://raw.githubusercontent.com/Cath855/CC150701-portal/main/docs/
 
 API_COMMITS = "https://api.github.com/repos/Cath855/CC150701-portal/commits"
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_resource(show_spinner=False)
+def _cache_fechas():
+    # Diccionario persistente entre recargas. Solo guardamos fechas validas,
+    # nunca vacias, para que un archivo recien subido se reintente hasta que
+    # GitHub termine de indexar su commit (tarda unos segundos).
+    return {}
+
 def fecha_en_github(nombre: str) -> str:
-    """Fecha (ISO, UTC) del ultimo commit que toco docs/<nombre>.
-    Sirve para fechar los archivos subidos directamente en GitHub."""
+    """Fecha (ISO, UTC) del ultimo commit que toco docs/<nombre>."""
+    cache = _cache_fechas()
+    if cache.get(nombre):
+        return cache[nombre]
     params = urllib.parse.urlencode({"path": f"docs/{nombre}", "per_page": 1})
-    req = urllib.request.Request(
-        f"{API_COMMITS}?{params}",
-        headers={"Accept": "application/vnd.github+json",
-                 "User-Agent": "portal-cc150701"},
-    )
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "portal-cc150701"}
+    tok = github_token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"   # sube el limite de la API
+    req = urllib.request.Request(f"{API_COMMITS}?{params}", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=6) as r:
             datos = json.loads(r.read().decode("utf-8"))
         if datos:
-            return datos[0]["commit"]["committer"]["date"]
+            fecha = datos[0]["commit"]["committer"]["date"]
+            cache[nombre] = fecha
+            return fecha
     except Exception:
         pass
     return ""
@@ -361,16 +374,23 @@ with st.sidebar:
             if nuevos and st.button("📤 Publicar en el portal",
                                     type="primary", use_container_width=True):
                 todo_ok = True
+                meta = cargar_meta()
                 for archi in nuevos:
                     datos = archi.getvalue()
                     ok, r = gh_subir(archi.name, datos)
                     if ok:
                         (DOCS_DIR / archi.name).write_bytes(datos)  # reflejo inmediato
+                        try:                                        # fecha del commit
+                            fecha_commit = r.json()["commit"]["committer"]["date"]
+                        except Exception:
+                            fecha_commit = datetime.now(timezone.utc).isoformat()
+                        meta[archi.name] = {"fecha": fecha_commit, "size": len(datos)}
                         st.success(f"✓ {archi.name}")
                     else:
                         todo_ok = False
                         detalle = (r.text[:150] if r is not None else "sin respuesta")
                         st.error(f"✗ {archi.name}: {detalle}")
+                guardar_meta(meta)
                 if todo_ok:
                     st.cache_data.clear()
                     st.success("Documentos publicados. Se guardaron en GitHub.")
@@ -475,6 +495,9 @@ else:
                         ok, r = gh_eliminar(f.name)
                         if ok:
                             f.unlink(missing_ok=True)      # reflejo inmediato
+                            m = cargar_meta()
+                            m.pop(f.name, None)
+                            guardar_meta(m)
                             st.cache_data.clear()
                             st.rerun()
                         else:
