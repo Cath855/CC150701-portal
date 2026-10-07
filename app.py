@@ -385,7 +385,7 @@ with st.sidebar:
                         except Exception:
                             fecha_commit = datetime.now(timezone.utc).isoformat()
                         meta[archi.name] = {"fecha": fecha_commit, "size": len(datos)}
-                        st.success(f"✓ {archi.name}")
+                        _cache_fechas()[archi.name] = fecha_commit
                     else:
                         todo_ok = False
                         detalle = (r.text[:150] if r is not None else "sin respuesta")
