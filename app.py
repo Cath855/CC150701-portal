@@ -400,8 +400,8 @@ with st.sidebar:
 meta = cargar_meta()
 
 def iso_de(f):
-    # Fecha del archivo: la de meta.json o, si no hay, la del commit en GitHub.
-    return meta.get(f.name, {}).get("fecha", "") or fecha_en_github(f.name)
+    # Fecha del archivo: la del ultimo commit en GitHub (fecha real de subida).
+    return fecha_en_github(f.name) or meta.get(f.name, {}).get("fecha", "")
 
 def dt_orden(iso):
     # Convierte la fecha a algo comparable; sin fecha -> queda como muy antigua.
